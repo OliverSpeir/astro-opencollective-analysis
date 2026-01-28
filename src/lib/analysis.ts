@@ -26,6 +26,14 @@ export interface ContributorAnalysis {
   oneTime: { amount: number; count: number; contributors: SourceBreakdown[] };
 }
 
+export interface IncomeSourcesAnalysis {
+  githubSponsors: { amount: number; count: number };
+  ocRecurring: { amount: number; count: number };
+  ocOneTime: { amount: number; count: number };
+  other: { amount: number; count: number };
+  total: number;
+}
+
 export interface SalaryAnalysis {
   recipient: string;
   totalPaid: number;
@@ -160,6 +168,10 @@ export function analyzeExpensesByCategory(transactions: Transaction[]): SourceBr
     ) {
       category = "Miscellaneous";
     }
+    // OC Fees: host fees charged by OpenCollective
+    else if (category === "HOST_FEE") {
+      category = "OC Fees";
+    }
     const current = categoryMap.get(category) ?? { amount: 0, count: 0 };
     current.amount += Math.abs(tx["Amount Single Column"]);
     current.count += 1;
@@ -225,6 +237,51 @@ export function analyzeContributions(transactions: Transaction[]): ContributorAn
   };
 }
 
+export function categorizeIncome(transactions: Transaction[]): IncomeSourcesAnalysis {
+  const result = {
+    githubSponsors: { amount: 0, count: 0 },
+    ocRecurring: { amount: 0, count: 0 },
+    ocOneTime: { amount: 0, count: 0 },
+    other: { amount: 0, count: 0 },
+    total: 0,
+  };
+
+  for (const tx of transactions) {
+    if (isReversedOrReverse(tx)) continue;
+    if (tx["Credit/Debit"] !== "CREDIT") continue;
+
+    const amount = tx["Amount Single Column"];
+    const kind = tx["Kind"];
+    const source = tx["Opposite Account Name"] || tx["Opposite Account Handle"] || "";
+
+    if (kind === "ADDED_FUNDS" && source.toLowerCase().includes("github")) {
+      result.githubSponsors.amount += amount;
+      result.githubSponsors.count += 1;
+    } else if (kind === "CONTRIBUTION") {
+      if (isRecurringContribution(tx)) {
+        result.ocRecurring.amount += amount;
+        result.ocRecurring.count += 1;
+      } else {
+        result.ocOneTime.amount += amount;
+        result.ocOneTime.count += 1;
+      }
+    } else {
+      result.other.amount += amount;
+      result.other.count += 1;
+    }
+
+    result.total += amount;
+  }
+
+  result.githubSponsors.amount = Math.round(result.githubSponsors.amount * 100) / 100;
+  result.ocRecurring.amount = Math.round(result.ocRecurring.amount * 100) / 100;
+  result.ocOneTime.amount = Math.round(result.ocOneTime.amount * 100) / 100;
+  result.other.amount = Math.round(result.other.amount * 100) / 100;
+  result.total = Math.round(result.total * 100) / 100;
+
+  return result;
+}
+
 export function analyzeMonthlyRecurringContributions(
   transactions: Transaction[]
 ): { month: string; recurring: number; oneTime: number }[] {
@@ -252,6 +309,83 @@ export function analyzeMonthlyRecurringContributions(
       month,
       recurring: Math.round(data.recurring * 100) / 100,
       oneTime: Math.round(data.oneTime * 100) / 100,
+    }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+}
+
+export interface MonthlyIncomeData {
+  month: string;
+  githubSponsors: number;
+  ocRecurring: number;
+  ocOneTime: number;
+  other: number;
+  topRecurring: { name: string; amount: number }[];
+  topOneTime: { name: string; amount: number }[];
+}
+
+export function categorizeMonthlyIncome(transactions: Transaction[]): MonthlyIncomeData[] {
+  const monthlyMap = new Map<
+    string,
+    {
+      githubSponsors: number;
+      ocRecurring: number;
+      ocOneTime: number;
+      other: number;
+      recurringContribs: Map<string, number>;
+      oneTimeContribs: Map<string, number>;
+    }
+  >();
+
+  for (const tx of transactions) {
+    if (isReversedOrReverse(tx)) continue;
+    if (tx["Credit/Debit"] !== "CREDIT") continue;
+
+    const month = getYearMonth(tx["Effective Date & Time"]);
+    const amount = tx["Amount Single Column"];
+    const kind = tx["Kind"];
+    const source = tx["Opposite Account Name"] || tx["Opposite Account Handle"] || "Unknown";
+
+    const current = monthlyMap.get(month) ?? {
+      githubSponsors: 0,
+      ocRecurring: 0,
+      ocOneTime: 0,
+      other: 0,
+      recurringContribs: new Map<string, number>(),
+      oneTimeContribs: new Map<string, number>(),
+    };
+
+    if (kind === "ADDED_FUNDS" && source.toLowerCase().includes("github")) {
+      current.githubSponsors += amount;
+    } else if (kind === "CONTRIBUTION") {
+      if (isRecurringContribution(tx)) {
+        current.ocRecurring += amount;
+        current.recurringContribs.set(source, (current.recurringContribs.get(source) ?? 0) + amount);
+      } else {
+        current.ocOneTime += amount;
+        current.oneTimeContribs.set(source, (current.oneTimeContribs.get(source) ?? 0) + amount);
+      }
+    } else {
+      current.other += amount;
+    }
+
+    monthlyMap.set(month, current);
+  }
+
+  const getTopContributors = (contribs: Map<string, number>, limit = 3) =>
+    Array.from(contribs.entries())
+      .map(([name, amount]) => ({ name, amount: Math.round(amount * 100) / 100 }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, limit);
+
+  return Array.from(monthlyMap.entries())
+    .map(([month, data]) => ({
+      month,
+      githubSponsors: Math.round(data.githubSponsors * 100) / 100,
+      ocRecurring: Math.round(data.ocRecurring * 100) / 100,
+      ocOneTime: Math.round(data.ocOneTime * 100) / 100,
+      other: Math.round(data.other * 100) / 100,
+      topRecurring: getTopContributors(data.recurringContribs),
+      topOneTime: getTopContributors(data.oneTimeContribs),
     }))
     .sort((a, b) => a.month.localeCompare(b.month));
 }
@@ -428,4 +562,48 @@ export function getLargestOneTimeContributions(
   return getLargestSingleContributions(transactions, 1000)
     .filter((c) => !c.isRecurring)
     .slice(0, limit);
+}
+
+export interface OtherIncomeBreakdown {
+  kind: string;
+  source: string;
+  amount: number;
+  count: number;
+}
+
+/**
+ * Breaks down the "Other" income category to show what types of credits
+ * fall outside GitHub Sponsors and OpenCollective contributions.
+ */
+export function analyzeOtherIncome(transactions: Transaction[]): OtherIncomeBreakdown[] {
+  const breakdownMap = new Map<string, { amount: number; count: number; source: string }>();
+
+  for (const tx of transactions) {
+    if (isReversedOrReverse(tx)) continue;
+    if (tx["Credit/Debit"] !== "CREDIT") continue;
+
+    const kind = tx["Kind"];
+    const source = tx["Opposite Account Name"] || tx["Opposite Account Handle"] || "";
+
+    // Skip GitHub Sponsors (ADDED_FUNDS with github in source)
+    if (kind === "ADDED_FUNDS" && source.toLowerCase().includes("github")) continue;
+    // Skip contributions
+    if (kind === "CONTRIBUTION") continue;
+
+    // Group by kind and source for better breakdown
+    const key = `${kind}::${source}`;
+    const current = breakdownMap.get(key) ?? { amount: 0, count: 0, source };
+    current.amount += tx["Amount Single Column"];
+    current.count += 1;
+    breakdownMap.set(key, current);
+  }
+
+  return Array.from(breakdownMap.entries())
+    .map(([key, data]) => ({
+      kind: key.split("::")[0],
+      source: data.source,
+      amount: Math.round(data.amount * 100) / 100,
+      count: data.count,
+    }))
+    .sort((a, b) => b.amount - a.amount);
 }

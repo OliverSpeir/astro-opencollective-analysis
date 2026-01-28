@@ -4,14 +4,15 @@ import Layout from "../layouts/Layout.astro";
 import {
   calculateMonthlyData,
   analyzeExpensesByCategory,
-  analyzeContributions,
-  analyzeMonthlyRecurringContributions,
+  categorizeIncome,
+  categorizeMonthlyIncome,
   analyzeSalariedExpenses,
   calculateRunwayProjection,
   calculateSalaryPercentageOfIncome,
   getTopContributors,
   getTopExpenses,
   getLargestOneTimeContributions,
+  analyzeOtherIncome,
 } from "../lib/analysis";
 
 const transactionsCollection = await getCollection("transactions");
@@ -19,14 +20,15 @@ const transactions = transactionsCollection.map((t) => t.data);
 
 const monthlyData = calculateMonthlyData(transactions);
 const expensesByCategory = analyzeExpensesByCategory(transactions);
-const contributions = analyzeContributions(transactions);
-const monthlyContributions = analyzeMonthlyRecurringContributions(transactions);
+const incomeSources = categorizeIncome(transactions);
+const monthlyIncomeSources = categorizeMonthlyIncome(transactions);
 const salariedExpenses = analyzeSalariedExpenses(transactions);
 const runway = calculateRunwayProjection(transactions);
 const salaryAnalysis = calculateSalaryPercentageOfIncome(transactions);
 const topContributors = getTopContributors(transactions, 15);
 const topExpenses = getTopExpenses(transactions, 15);
 const largestOneTime = getLargestOneTimeContributions(transactions, 5);
+const otherIncomeBreakdown = analyzeOtherIncome(transactions);
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
@@ -82,10 +84,10 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
     <div class="chart-section expense-chart">
       <h2>Expense Categories</h2>
       <p class="note category-note">
-        <strong>Paid Maintainers:</strong> Consultant fees and core maintainer stipends.
-        <strong>Community Incentives:</strong> Grants, awards, and community support.
-        <strong>Miscellaneous:</strong> Travel, donations, and uncategorized expenses.
-        <strong>OpenCollective Fees:</strong> Platform hosting fees (~10%).
+        <span><strong>Paid Maintainers:</strong> Consultant fees and core maintainer stipends.</span>
+        <span><strong>Community Incentives:</strong> Grants, awards, and community support.</span>
+        <span><strong>Miscellaneous:</strong> Travel, donations, and uncategorized expenses.</span>
+        <span><strong>OC Fees:</strong> Open Collective fees (~10%).</span>
       </p>
       <div class="chart-container small">
         <canvas id="expenseCategoryChart"></canvas>
@@ -108,30 +110,82 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
   </section>
 
   <section class="chart-section">
-    <h2>Recurring vs One-Time Contributions</h2>
+    <h2>Income Sources</h2>
     <div class="stats-row">
       <div class="stat">
-        <span class="stat-label">Recurring Total</span>
-        <span class="stat-value positive">{formatCurrency(contributions.recurring.amount)}</span>
-        <span class="stat-count">({contributions.recurring.count} contributions)</span>
+        <span class="stat-label">GitHub Sponsors</span>
+        <span class="stat-value">{formatCurrency(incomeSources.githubSponsors.amount)}</span>
+        <span class="stat-count">({incomeSources.githubSponsors.count} transfers)</span>
       </div>
       <div class="stat">
-        <span class="stat-label">One-Time Total</span>
-        <span class="stat-value">{formatCurrency(contributions.oneTime.amount)}</span>
-        <span class="stat-count">({contributions.oneTime.count} contributions)</span>
+        <span class="stat-label">OC Recurring</span>
+        <span class="stat-value positive">{formatCurrency(incomeSources.ocRecurring.amount)}</span>
+        <span class="stat-count">({incomeSources.ocRecurring.count} contributions)</span>
       </div>
+      <div class="stat">
+        <span class="stat-label">OC One-Time</span>
+        <span class="stat-value">{formatCurrency(incomeSources.ocOneTime.amount)}</span>
+        <span class="stat-count">({incomeSources.ocOneTime.count} contributions)</span>
+      </div>
+      {incomeSources.other.amount > 0 && (
+        <div class="stat">
+          <span class="stat-label">Other</span>
+          <span class="stat-value">{formatCurrency(incomeSources.other.amount)}</span>
+          <span class="stat-count">({incomeSources.other.count} transactions)</span>
+        </div>
+      )}
     </div>
-    <p class="note">
-      Classification is based on OpenCollective's transaction descriptions: contributions labeled
-      "Monthly contribution from..." are counted as recurring; all others (including "Contribution from...",
-      "Added Funds from GitHub Sponsors", etc.) are counted as one-time. GitHub Sponsors contributions
-      arrive as periodic lump-sum transfers and cannot be distinguished as recurring vs one-time from
-      this data alone.
+    <p class="note category-note">
+      <span><strong>GitHub Sponsors:</strong> Periodic lump-sum transfers from GitHub.</span>
+      <span><strong>OC Recurring:</strong> Monthly contributions via OpenCollective.</span>
+      <span><strong>OC One-Time:</strong> Single contributions via OpenCollective.</span>
+      <span><strong>Other:</strong> Host fees, payment processor covers, refunds.</span>
+      <span>Values that exceed the scale are clamped and marked with a triangle—hover for actual amount.</span>
     </p>
     <div class="chart-container small">
-      <canvas id="contributionTypeChart"></canvas>
+      <canvas id="incomeSourcesChart"></canvas>
     </div>
   </section>
+
+  {otherIncomeBreakdown.length > 0 && (
+    <section class="chart-section">
+      <h2>Other Income Breakdown</h2>
+      <p class="note">
+        Breakdown of the {formatCurrency(incomeSources.other.amount)} in "Other" income ({incomeSources.other.count} transactions).
+        These are credits that aren't GitHub Sponsors or OpenCollective contributions.
+      </p>
+      <div class="other-income-layout">
+        <div class="chart-container small">
+          <canvas id="otherIncomeChart"></canvas>
+        </div>
+        <div class="table-container">
+          <table class="expandable-table" data-visible="5">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Source</th>
+                <th class="number">Amount</th>
+                <th class="number">Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {otherIncomeBreakdown.map((item, i) => (
+                <tr class:list={{ hidden: i >= 5 }}>
+                  <td>{item.kind}</td>
+                  <td>{item.source || "Unknown"}</td>
+                  <td class="number positive">{formatCurrency(item.amount)}</td>
+                  <td class="number">{item.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {otherIncomeBreakdown.length > 5 && (
+            <button class="expand-toggle" aria-expanded="false">Show More</button>
+          )}
+        </div>
+      </div>
+    </section>
+  )}
 
   <section class="chart-section">
     <h2>Paid Maintainers Analysis</h2>
@@ -265,13 +319,13 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
 
 </Layout>
 
-<script type="application/json" id="chart-data" set:html={JSON.stringify({ monthlyData, expensesByCategory, monthlyContributions })} />
+<script type="application/json" id="chart-data" set:html={JSON.stringify({ monthlyData, expensesByCategory, monthlyIncomeSources, otherIncomeBreakdown })} />
 
 <script>
   import Chart from "chart.js/auto";
 
   const dataElement = document.getElementById("chart-data");
-  const { monthlyData, expensesByCategory, monthlyContributions } = JSON.parse(dataElement?.textContent || "{}");
+  const { monthlyData, expensesByCategory, monthlyIncomeSources, otherIncomeBreakdown } = JSON.parse(dataElement?.textContent || "{}");
 
   const colors = {
     green: "#3fb950",
@@ -283,6 +337,48 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
     orange: "#f0883e",
     pink: "#db61a2",
   };
+
+  /**
+   * Creates x-axis tick configuration that ensures bookend labels are always visible.
+   * On mobile, shows fewer labels but always includes first and last for context.
+   */
+  function createResponsiveXTicks(labels: string[]) {
+    const totalLabels = labels.length;
+    const viewportWidth = window.innerWidth;
+
+    // Determine max labels based on viewport
+    let maxLabels: number;
+    if (viewportWidth < 480) {
+      maxLabels = 4;
+    } else if (viewportWidth < 768) {
+      maxLabels = 6;
+    } else if (viewportWidth < 1024) {
+      maxLabels = 10;
+    } else {
+      maxLabels = 14;
+    }
+
+    // Calculate which indices to show (always include first and last)
+    const step = Math.max(1, Math.ceil((totalLabels - 1) / (maxLabels - 1)));
+    const visibleIndices = new Set<number>();
+    visibleIndices.add(0); // First label
+    visibleIndices.add(totalLabels - 1); // Last label
+
+    // Add evenly spaced intermediate labels
+    for (let i = step; i < totalLabels - 1; i += step) {
+      visibleIndices.add(i);
+    }
+
+    return {
+      color: "#8b949e",
+      maxRotation: 45,
+      minRotation: 0,
+      autoSkip: false,
+      callback: function(_value: any, index: number) {
+        return visibleIndices.has(index) ? labels[index] : null;
+      }
+    };
+  }
 
   const chartOptions = {
     responsive: true,
@@ -304,10 +400,12 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
     },
   };
 
+  const monthlyLabels = monthlyData.map((d: any) => d.month);
+
   new Chart(document.getElementById("monthlyChart") as HTMLCanvasElement, {
     type: "bar",
     data: {
-      labels: monthlyData.map((d: any) => d.month),
+      labels: monthlyLabels,
       datasets: [
         {
           label: "Income",
@@ -338,7 +436,7 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
       },
       scales: {
         x: {
-          ticks: { color: "#8b949e" },
+          ticks: createResponsiveXTicks(monthlyLabels),
           grid: { color: "#30363d" },
         },
         y: {
@@ -364,7 +462,7 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
   new Chart(document.getElementById("balanceChart") as HTMLCanvasElement, {
     type: "line",
     data: {
-      labels: monthlyData.map((d: any) => d.month),
+      labels: monthlyLabels,
       datasets: [
         {
           data: cumulativeData,
@@ -378,41 +476,139 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
     options: {
       ...chartOptions,
       plugins: { ...chartOptions.plugins, legend: { display: false } },
+      scales: {
+        ...chartOptions.scales,
+        x: {
+          ...chartOptions.scales.x,
+          ticks: createResponsiveXTicks(monthlyLabels),
+        },
+      },
     },
   });
 
-  new Chart(document.getElementById("contributionTypeChart") as HTMLCanvasElement, {
+  const incomeSourceLabels = monthlyIncomeSources.map((d: any) => d.month);
+
+  // Calculate Y-axis max from non-Other data, rounded up to nearest 5k
+  const incomeYMax = Math.ceil(
+    Math.max(...monthlyIncomeSources.flatMap((d: any) => [d.githubSponsors, d.ocRecurring, d.ocOneTime])) / 5000
+  ) * 5000;
+
+  // Store actual "Other" values, clamp visual data to Y max
+  const otherActualValues = monthlyIncomeSources.map((d: any) => d.other);
+  const otherClampedValues = otherActualValues.map((v: number) => Math.min(v, incomeYMax * 0.97));
+
+  new Chart(document.getElementById("incomeSourcesChart") as HTMLCanvasElement, {
     type: "line",
     data: {
-      labels: monthlyContributions.map((d: any) => d.month),
+      labels: incomeSourceLabels,
       datasets: [
         {
-          label: "Recurring",
-          data: monthlyContributions.map((d: any) => d.recurring),
+          label: "GitHub Sponsors",
+          data: monthlyIncomeSources.map((d: any) => d.githubSponsors),
+          borderColor: colors.pink,
+          backgroundColor: colors.pink + "33",
+          fill: true,
+        },
+        {
+          label: "OC Recurring",
+          data: monthlyIncomeSources.map((d: any) => d.ocRecurring),
           borderColor: colors.green,
           backgroundColor: colors.green + "33",
           fill: true,
         },
         {
-          label: "One-Time",
-          data: monthlyContributions.map((d: any) => d.oneTime),
+          label: "OC One-Time",
+          data: monthlyIncomeSources.map((d: any) => d.ocOneTime),
           borderColor: colors.purple,
           backgroundColor: colors.purple + "33",
           fill: true,
         },
+        {
+          label: "Other",
+          data: otherClampedValues,
+          borderColor: colors.orange,
+          backgroundColor: colors.orange + "33",
+          fill: true,
+          pointStyle: otherActualValues.map((v: number, i: number) =>
+            v > otherClampedValues[i] ? "triangle" : "circle"
+          ),
+          pointRadius: otherActualValues.map((v: number, i: number) =>
+            v > otherClampedValues[i] ? 6 : 3
+          ),
+        },
       ],
     },
-    options: chartOptions,
+    options: {
+      ...chartOptions,
+      interaction: {
+        mode: "nearest",
+        intersect: true,
+      },
+      plugins: {
+        ...chartOptions.plugins,
+        tooltip: {
+          callbacks: {
+            label: (context: any) => {
+              // Use actual value for "Other", not clamped
+              let value = context.raw;
+              if (context.dataset.label === "Other") {
+                value = otherActualValues[context.dataIndex];
+              }
+              const formatted = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
+              return `${context.dataset.label}: ${formatted}`;
+            },
+            afterLabel: (context: any) => {
+              const dataIndex = context.dataIndex;
+              const datasetLabel = context.dataset.label;
+              const monthData = monthlyIncomeSources[dataIndex];
+              if (!monthData) return [];
+
+              const lines: string[] = [];
+              let contributors: any[] = [];
+
+              if (datasetLabel === "OC Recurring" && monthData.topRecurring?.length > 0) {
+                contributors = monthData.topRecurring;
+              } else if (datasetLabel === "OC One-Time" && monthData.topOneTime?.length > 0) {
+                contributors = monthData.topOneTime;
+              }
+
+              contributors.forEach((c: any) => {
+                const amt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(c.amount);
+                lines.push(`  ${c.name}: ${amt}`);
+              });
+
+              return lines;
+            },
+          },
+        },
+      },
+      scales: {
+        ...chartOptions.scales,
+        x: {
+          ...chartOptions.scales.x,
+          ticks: createResponsiveXTicks(incomeSourceLabels),
+        },
+        y: {
+          ...chartOptions.scales.y,
+          max: incomeYMax,
+        },
+      },
+    },
   });
 
   const topCategories = expensesByCategory.slice(0, 8);
   const categoryColorMap: Record<string, string> = {
     "Paid Maintainers": "#58a6ff",      // Blue - primary expense, professional
     "Community Incentives": "#a371f7",  // Purple - community/creative
-    "OpenCollective Fees": "#6e7681",   // Gray - overhead/platform fees
+    "OC Fees": "#6e7681",               // Gray - overhead/platform fees
     "Miscellaneous": "#f0883e",         // Orange - varied/other
   };
   const fallbackColors = [colors.cyan, colors.pink, colors.yellow, colors.green];
+
+  // Responsive legend for doughnut chart
+  const isMobile = window.innerWidth < 600;
+  const doughnutLegendFontSize = isMobile ? 13 : 14;
+  const doughnutLegendPadding = isMobile ? 16 : 12;
 
   new Chart(document.getElementById("expenseCategoryChart") as HTMLCanvasElement, {
     type: "doughnut",
@@ -430,10 +626,38 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      layout: {
+        padding: { top: 15 },
+      },
       plugins: {
         legend: {
-          position: "right",
-          labels: { color: "#c9d1d9", font: { size: 14 } },
+          position: "bottom",
+          align: "start",
+          title: {
+            display: true,
+            text: "",
+            padding: { top: 20 },
+          },
+          labels: {
+            color: "#c9d1d9",
+            font: { size: doughnutLegendFontSize },
+            padding: doughnutLegendPadding,
+            boxWidth: 14,
+            boxHeight: 14,
+            generateLabels: (chart: any) => {
+              const datasets = chart.data.datasets;
+              return chart.data.labels.map((label: string, i: number) => ({
+                text: "  " + label,
+                fillStyle: datasets[0].backgroundColor[i],
+                strokeStyle: datasets[0].backgroundColor[i],
+                fontColor: "#c9d1d9",
+                lineWidth: 0,
+                hidden: false,
+                index: i,
+              }));
+            },
+          },
+          maxWidth: 1,
         },
         tooltip: {
           callbacks: {
@@ -449,6 +673,80 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
       },
     },
   });
+
+  // Other Income chart
+  const otherIncomeCanvas = document.getElementById("otherIncomeChart") as HTMLCanvasElement | null;
+  if (otherIncomeCanvas && otherIncomeBreakdown?.length > 0) {
+    // Group small items into "Other" for cleaner chart
+    const threshold = 0.02; // 2% threshold
+    const total = otherIncomeBreakdown.reduce((sum: number, item: any) => sum + item.amount, 0);
+
+    const significantItems: any[] = [];
+    let otherAmount = 0;
+    let otherCount = 0;
+
+    for (const item of otherIncomeBreakdown) {
+      if (item.amount / total >= threshold) {
+        significantItems.push(item);
+      } else {
+        otherAmount += item.amount;
+        otherCount += 1;
+      }
+    }
+
+    if (otherAmount > 0) {
+      significantItems.push({ kind: "Other", source: `${otherCount} small items`, amount: otherAmount, count: otherCount });
+    }
+
+    const otherIncomeColors = [colors.blue, colors.purple, colors.cyan, colors.orange, colors.pink, colors.yellow, colors.green, "#6e7681"];
+
+    new Chart(otherIncomeCanvas, {
+      type: "doughnut",
+      data: {
+        labels: significantItems.map((item: any) => item.source || item.kind),
+        datasets: [
+          {
+            data: significantItems.map((item: any) => item.amount),
+            backgroundColor: significantItems.map((_: any, i: number) => otherIncomeColors[i % otherIncomeColors.length]),
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: {
+          padding: { top: 15 },
+        },
+        plugins: {
+          legend: {
+            position: "bottom",
+            align: "start",
+            labels: {
+              color: "#c9d1d9",
+              font: { size: isMobile ? 13 : 14 },
+              padding: isMobile ? 16 : 12,
+              boxWidth: 14,
+              boxHeight: 14,
+            },
+          },
+          tooltip: {
+            callbacks: {
+              title: (context: any) => {
+                const item = significantItems[context[0].dataIndex];
+                return `${item.kind}: ${item.source || "Unknown"}`;
+              },
+              label: (context: any) => {
+                const value = context.raw;
+                const percentage = ((value / total) * 100).toFixed(1);
+                const formatted = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
+                return `${formatted} (${percentage}%)`;
+              },
+            },
+          },
+        },
+      },
+    });
+  }
 
   // Expandable table toggles
   document.querySelectorAll(".expand-toggle").forEach((button) => {
@@ -512,6 +810,7 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
 
   .hero-section .expense-chart {
     margin-bottom: 0;
+    min-width: 0;
   }
 
   .hero-section .expense-chart .chart-container.small {
@@ -521,6 +820,54 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
   @media (max-width: 800px) {
     .hero-section {
       grid-template-columns: 1fr;
+    }
+
+    .two-column {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .chart-container {
+      height: 300px;
+    }
+
+    .chart-container.small {
+      height: 280px;
+    }
+
+    .hero-section .expense-chart .chart-container.small {
+      height: 320px;
+    }
+
+    .hero-section .summary-cards {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .hero-section .summary-cards .current-balance {
+      grid-column: span 2;
+    }
+
+    .hero-section .summary-cards .current-balance .value {
+      font-size: 1.5rem;
+    }
+
+    .summary-cards {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .two-column .chart-section {
+      min-width: 0;
+    }
+  }
+
+  @media (max-width: 400px) {
+    .summary-cards {
+      grid-template-columns: 1fr;
+    }
+
+    .chart-container {
+      height: 250px;
     }
   }
 
@@ -573,6 +920,8 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
     border-radius: 8px;
     padding: 1.5rem;
     margin-bottom: 2rem;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .chart-container {
@@ -587,13 +936,14 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
 
   .two-column {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(400px, 100%), 1fr));
     gap: 2rem;
     margin-bottom: 2rem;
   }
 
   .two-column .chart-section {
     margin-bottom: 0;
+    min-width: 0;
   }
 
   .stats-row {
@@ -646,6 +996,11 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
     line-height: 1.5;
   }
 
+  .category-note span {
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+
   .category-note strong {
     color: var(--color-text);
     font-style: normal;
@@ -653,6 +1008,14 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
 
   .table-container {
     overflow-x: auto;
+    min-width: 0;
+  }
+
+  .two-column table td:first-child {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   table {
@@ -716,5 +1079,22 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
 
   .expand-toggle:hover {
     background: var(--color-border);
+  }
+
+  .other-income-layout {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    gap: 2rem;
+    align-items: start;
+  }
+
+  @media (max-width: 800px) {
+    .other-income-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .other-income-layout .chart-container.small {
+      height: 280px;
+    }
   }
 </style>
