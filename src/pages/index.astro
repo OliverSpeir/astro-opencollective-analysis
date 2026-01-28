@@ -6,6 +6,7 @@ import {
   analyzeExpensesByCategory,
   categorizeIncome,
   categorizeMonthlyIncome,
+  categorizeMonthlyExpenses,
   analyzeSalariedExpenses,
   calculateRunwayProjection,
   calculateSalaryPercentageOfIncome,
@@ -21,6 +22,7 @@ const monthlyData = calculateMonthlyData(transactions);
 const expensesByCategory = analyzeExpensesByCategory(transactions);
 const incomeSources = categorizeIncome(transactions);
 const monthlyIncomeSources = categorizeMonthlyIncome(transactions);
+const monthlyExpenses = categorizeMonthlyExpenses(transactions);
 const salariedExpenses = analyzeSalariedExpenses(transactions);
 const runway = calculateRunwayProjection(transactions);
 const salaryAnalysis = calculateSalaryPercentageOfIncome(transactions);
@@ -136,8 +138,8 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
     <p class="note category-note">
       <span><strong>GitHub Sponsors:</strong> Periodic lump-sum transfers from GitHub.</span>
       <span><strong>OC Recurring:</strong> Monthly contributions via OpenCollective.</span>
-      <span><strong>OC One-Time:</strong> Single contributions via OpenCollective.</span>
-      <span><strong>Other:</strong> Host fees, payment processor covers, refunds.</span>
+      <span><strong>OC One-Time:</strong> Single contributions and corporate sponsorships.</span>
+      <span><strong>Other:</strong> Refunds and payment processor fee adjustments.</span>
       <span>Values that exceed the scale are clamped and marked with a triangle—hover for actual amount.</span>
     </p>
     <div class="chart-container small">
@@ -277,13 +279,13 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
 
 </Layout>
 
-<script type="application/json" id="chart-data" set:html={JSON.stringify({ monthlyData, expensesByCategory, monthlyIncomeSources })} />
+<script type="application/json" id="chart-data" set:html={JSON.stringify({ monthlyData, expensesByCategory, monthlyIncomeSources, monthlyExpenses })} />
 
 <script>
   import Chart from "chart.js/auto";
 
   const dataElement = document.getElementById("chart-data");
-  const { monthlyData, expensesByCategory, monthlyIncomeSources } = JSON.parse(dataElement?.textContent || "{}");
+  const { monthlyData, expensesByCategory, monthlyIncomeSources, monthlyExpenses } = JSON.parse(dataElement?.textContent || "{}");
 
   const colors = {
     green: "#3fb950",
@@ -389,6 +391,49 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
               const formatted = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
               return `${context.dataset.label}: ${formatted}`;
             },
+            afterLabel: (context: any) => {
+              const dataIndex = context.dataIndex;
+              const datasetLabel = context.dataset.label;
+              const formatAmt = (v: number) =>
+                new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(v);
+
+              if (datasetLabel === "Income") {
+                const incomeData = monthlyIncomeSources[dataIndex];
+                if (!incomeData) return [];
+                const lines: string[] = [];
+                if (incomeData.githubSponsors > 0) {
+                  lines.push(`  GitHub Sponsors: ${formatAmt(incomeData.githubSponsors)}`);
+                }
+                if (incomeData.ocRecurring > 0) {
+                  lines.push(`  OC Recurring: ${formatAmt(incomeData.ocRecurring)}`);
+                }
+                if (incomeData.ocOneTime > 0) {
+                  lines.push(`  OC One-Time: ${formatAmt(incomeData.ocOneTime)}`);
+                }
+                if (incomeData.other > 0) {
+                  lines.push(`  Other: ${formatAmt(incomeData.other)}`);
+                }
+                return lines;
+              } else if (datasetLabel === "Expenses") {
+                const expenseData = monthlyExpenses[dataIndex];
+                if (!expenseData) return [];
+                const lines: string[] = [];
+                if (expenseData.paidMaintainers > 0) {
+                  lines.push(`  Paid Maintainers: ${formatAmt(expenseData.paidMaintainers)}`);
+                }
+                if (expenseData.communityIncentives > 0) {
+                  lines.push(`  Community Incentives: ${formatAmt(expenseData.communityIncentives)}`);
+                }
+                if (expenseData.miscellaneous > 0) {
+                  lines.push(`  Miscellaneous: ${formatAmt(expenseData.miscellaneous)}`);
+                }
+                if (expenseData.ocFees > 0) {
+                  lines.push(`  OC Fees: ${formatAmt(expenseData.ocFees)}`);
+                }
+                return lines;
+              }
+              return [];
+            },
           },
         },
       },
@@ -446,14 +491,30 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
 
   const incomeSourceLabels = monthlyIncomeSources.map((d: any) => d.month);
 
-  // Calculate Y-axis max from non-Other data, rounded up to nearest 5k
-  const incomeYMax = Math.ceil(
-    Math.max(...monthlyIncomeSources.flatMap((d: any) => [d.githubSponsors, d.ocRecurring, d.ocOneTime])) / 5000
-  ) * 5000;
+  // Store actual values for all datasets (excluding "Other" which is negligible)
+  const actualValues = {
+    githubSponsors: monthlyIncomeSources.map((d: any) => d.githubSponsors),
+    ocRecurring: monthlyIncomeSources.map((d: any) => d.ocRecurring),
+    ocOneTime: monthlyIncomeSources.map((d: any) => d.ocOneTime),
+  };
 
-  // Store actual "Other" values, clamp visual data to Y max
-  const otherActualValues = monthlyIncomeSources.map((d: any) => d.other);
-  const otherClampedValues = otherActualValues.map((v: number) => Math.min(v, incomeYMax * 0.97));
+  // Calculate Y-axis max at 20k for readable scale
+  const incomeYMax = 20000;
+  const clampThreshold = incomeYMax * 0.97;
+
+  // Clamp all datasets to Y max, preserving actual values for tooltips
+  const clampValues = (values: number[]) => values.map((v) => Math.min(v, clampThreshold));
+  const clampedValues = {
+    githubSponsors: clampValues(actualValues.githubSponsors),
+    ocRecurring: clampValues(actualValues.ocRecurring),
+    ocOneTime: clampValues(actualValues.ocOneTime),
+  };
+
+  // Helper to create point styles (triangle for clamped values)
+  const createPointStyle = (actual: number[], clamped: number[]) =>
+    actual.map((v, i) => (v > clamped[i] ? "triangle" : "circle"));
+  const createPointRadius = (actual: number[], clamped: number[]) =>
+    actual.map((v, i) => (v > clamped[i] ? 6 : 3));
 
   new Chart(document.getElementById("incomeSourcesChart") as HTMLCanvasElement, {
     type: "line",
@@ -462,37 +523,30 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
       datasets: [
         {
           label: "GitHub Sponsors",
-          data: monthlyIncomeSources.map((d: any) => d.githubSponsors),
+          data: clampedValues.githubSponsors,
           borderColor: colors.pink,
           backgroundColor: colors.pink + "33",
           fill: true,
+          pointStyle: createPointStyle(actualValues.githubSponsors, clampedValues.githubSponsors),
+          pointRadius: createPointRadius(actualValues.githubSponsors, clampedValues.githubSponsors),
         },
         {
           label: "OC Recurring",
-          data: monthlyIncomeSources.map((d: any) => d.ocRecurring),
+          data: clampedValues.ocRecurring,
           borderColor: colors.green,
           backgroundColor: colors.green + "33",
           fill: true,
+          pointStyle: createPointStyle(actualValues.ocRecurring, clampedValues.ocRecurring),
+          pointRadius: createPointRadius(actualValues.ocRecurring, clampedValues.ocRecurring),
         },
         {
           label: "OC One-Time",
-          data: monthlyIncomeSources.map((d: any) => d.ocOneTime),
+          data: clampedValues.ocOneTime,
           borderColor: colors.purple,
           backgroundColor: colors.purple + "33",
           fill: true,
-        },
-        {
-          label: "Other",
-          data: otherClampedValues,
-          borderColor: colors.orange,
-          backgroundColor: colors.orange + "33",
-          fill: true,
-          pointStyle: otherActualValues.map((v: number, i: number) =>
-            v > otherClampedValues[i] ? "triangle" : "circle"
-          ),
-          pointRadius: otherActualValues.map((v: number, i: number) =>
-            v > otherClampedValues[i] ? 6 : 3
-          ),
+          pointStyle: createPointStyle(actualValues.ocOneTime, clampedValues.ocOneTime),
+          pointRadius: createPointRadius(actualValues.ocOneTime, clampedValues.ocOneTime),
         },
       ],
     },
@@ -507,11 +561,13 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
         tooltip: {
           callbacks: {
             label: (context: any) => {
-              // Use actual value for "Other", not clamped
-              let value = context.raw;
-              if (context.dataset.label === "Other") {
-                value = otherActualValues[context.dataIndex];
-              }
+              // Use actual value, not clamped
+              const datasetKey = {
+                "GitHub Sponsors": "githubSponsors",
+                "OC Recurring": "ocRecurring",
+                "OC One-Time": "ocOneTime",
+              }[context.dataset.label as string] as keyof typeof actualValues;
+              const value = datasetKey ? actualValues[datasetKey][context.dataIndex] : context.raw;
               const formatted = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
               return `${context.dataset.label}: ${formatted}`;
             },

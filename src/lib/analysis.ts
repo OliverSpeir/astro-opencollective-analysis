@@ -265,6 +265,10 @@ export function categorizeIncome(transactions: Transaction[]): IncomeSourcesAnal
         result.ocOneTime.amount += amount;
         result.ocOneTime.count += 1;
       }
+    } else if (kind === "ADDED_FUNDS") {
+      // Non-GitHub added funds (corporate sponsors like Sentry)
+      result.ocOneTime.amount += amount;
+      result.ocOneTime.count += 1;
     } else {
       result.other.amount += amount;
       result.other.count += 1;
@@ -323,6 +327,14 @@ export interface MonthlyIncomeData {
   topOneTime: { name: string; amount: number }[];
 }
 
+export interface MonthlyExpenseData {
+  month: string;
+  paidMaintainers: number;
+  communityIncentives: number;
+  miscellaneous: number;
+  ocFees: number;
+}
+
 export function categorizeMonthlyIncome(transactions: Transaction[]): MonthlyIncomeData[] {
   const monthlyMap = new Map<
     string,
@@ -364,6 +376,10 @@ export function categorizeMonthlyIncome(transactions: Transaction[]): MonthlyInc
         current.ocOneTime += amount;
         current.oneTimeContribs.set(source, (current.oneTimeContribs.get(source) ?? 0) + amount);
       }
+    } else if (kind === "ADDED_FUNDS") {
+      // Non-GitHub added funds (corporate sponsors like Sentry)
+      current.ocOneTime += amount;
+      current.oneTimeContribs.set(source, (current.oneTimeContribs.get(source) ?? 0) + amount);
     } else {
       current.other += amount;
     }
@@ -386,6 +402,74 @@ export function categorizeMonthlyIncome(transactions: Transaction[]): MonthlyInc
       other: Math.round(data.other * 100) / 100,
       topRecurring: getTopContributors(data.recurringContribs),
       topOneTime: getTopContributors(data.oneTimeContribs),
+    }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+}
+
+/**
+ * Categorizes monthly expenses into the 4 main categories used in the dashboard.
+ */
+export function categorizeMonthlyExpenses(transactions: Transaction[]): MonthlyExpenseData[] {
+  const monthlyMap = new Map<
+    string,
+    {
+      paidMaintainers: number;
+      communityIncentives: number;
+      miscellaneous: number;
+      ocFees: number;
+    }
+  >();
+
+  for (const tx of transactions) {
+    if (isReversedOrReverse(tx)) continue;
+    if (tx["Credit/Debit"] !== "DEBIT") continue;
+
+    const month = getYearMonth(tx["Effective Date & Time"]);
+    const amount = Math.abs(tx["Amount Single Column"]);
+    let category = (tx["Accounting Category Name"] ?? tx["Kind"]) || "Uncategorized";
+    const description = tx["Description"].toLowerCase();
+
+    const current = monthlyMap.get(month) ?? {
+      paidMaintainers: 0,
+      communityIncentives: 0,
+      miscellaneous: 0,
+      ocFees: 0,
+    };
+
+    // Use same categorization logic as analyzeExpensesByCategory
+    if (category.startsWith("Consultants") || description.includes("core maintainer stipend")) {
+      current.paidMaintainers += amount;
+    } else if (
+      category.startsWith("Grants") ||
+      category.startsWith("Other, Support & Commu") ||
+      description.includes("community award")
+    ) {
+      current.communityIncentives += amount;
+    } else if (category === "HOST_FEE") {
+      current.ocFees += amount;
+    } else if (
+      category === "EXPENSE" ||
+      category === "CONTRIBUTION" ||
+      category.startsWith("Expenses - Donation") ||
+      category.startsWith("Expenses - Travel") ||
+      category.startsWith("Contributions - Hosted")
+    ) {
+      current.miscellaneous += amount;
+    } else {
+      // Anything else goes to miscellaneous
+      current.miscellaneous += amount;
+    }
+
+    monthlyMap.set(month, current);
+  }
+
+  return Array.from(monthlyMap.entries())
+    .map(([month, data]) => ({
+      month,
+      paidMaintainers: Math.round(data.paidMaintainers * 100) / 100,
+      communityIncentives: Math.round(data.communityIncentives * 100) / 100,
+      miscellaneous: Math.round(data.miscellaneous * 100) / 100,
+      ocFees: Math.round(data.ocFees * 100) / 100,
     }))
     .sort((a, b) => a.month.localeCompare(b.month));
 }
@@ -585,8 +669,8 @@ export function analyzeOtherIncome(transactions: Transaction[]): OtherIncomeBrea
     const kind = tx["Kind"];
     const source = tx["Opposite Account Name"] || tx["Opposite Account Handle"] || "";
 
-    // Skip GitHub Sponsors (ADDED_FUNDS with github in source)
-    if (kind === "ADDED_FUNDS" && source.toLowerCase().includes("github")) continue;
+    // Skip all ADDED_FUNDS (GitHub Sponsors and corporate sponsors like Sentry)
+    if (kind === "ADDED_FUNDS") continue;
     // Skip contributions
     if (kind === "CONTRIBUTION") continue;
 
