@@ -12,7 +12,6 @@ import {
   getTopContributors,
   getTopExpenses,
   getLargestOneTimeContributions,
-  analyzeOtherIncome,
 } from "../lib/analysis";
 
 const transactionsCollection = await getCollection("transactions");
@@ -28,7 +27,6 @@ const salaryAnalysis = calculateSalaryPercentageOfIncome(transactions);
 const topContributors = getTopContributors(transactions, 15);
 const topExpenses = getTopExpenses(transactions, 15);
 const largestOneTime = getLargestOneTimeContributions(transactions, 5);
-const otherIncomeBreakdown = analyzeOtherIncome(transactions);
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount);
@@ -146,46 +144,6 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
       <canvas id="incomeSourcesChart"></canvas>
     </div>
   </section>
-
-  {otherIncomeBreakdown.length > 0 && (
-    <section class="chart-section">
-      <h2>Other Income Breakdown</h2>
-      <p class="note">
-        Breakdown of the {formatCurrency(incomeSources.other.amount)} in "Other" income ({incomeSources.other.count} transactions).
-        These are credits that aren't GitHub Sponsors or OpenCollective contributions.
-      </p>
-      <div class="other-income-layout">
-        <div class="chart-container small">
-          <canvas id="otherIncomeChart"></canvas>
-        </div>
-        <div class="table-container">
-          <table class="expandable-table" data-visible="5">
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Source</th>
-                <th class="number">Amount</th>
-                <th class="number">Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {otherIncomeBreakdown.map((item, i) => (
-                <tr class:list={{ hidden: i >= 5 }}>
-                  <td>{item.kind}</td>
-                  <td>{item.source || "Unknown"}</td>
-                  <td class="number positive">{formatCurrency(item.amount)}</td>
-                  <td class="number">{item.count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {otherIncomeBreakdown.length > 5 && (
-            <button class="expand-toggle" aria-expanded="false">Show More</button>
-          )}
-        </div>
-      </div>
-    </section>
-  )}
 
   <section class="chart-section">
     <h2>Paid Maintainers Analysis</h2>
@@ -319,13 +277,13 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
 
 </Layout>
 
-<script type="application/json" id="chart-data" set:html={JSON.stringify({ monthlyData, expensesByCategory, monthlyIncomeSources, otherIncomeBreakdown })} />
+<script type="application/json" id="chart-data" set:html={JSON.stringify({ monthlyData, expensesByCategory, monthlyIncomeSources })} />
 
 <script>
   import Chart from "chart.js/auto";
 
   const dataElement = document.getElementById("chart-data");
-  const { monthlyData, expensesByCategory, monthlyIncomeSources, otherIncomeBreakdown } = JSON.parse(dataElement?.textContent || "{}");
+  const { monthlyData, expensesByCategory, monthlyIncomeSources } = JSON.parse(dataElement?.textContent || "{}");
 
   const colors = {
     green: "#3fb950",
@@ -674,80 +632,6 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
     },
   });
 
-  // Other Income chart
-  const otherIncomeCanvas = document.getElementById("otherIncomeChart") as HTMLCanvasElement | null;
-  if (otherIncomeCanvas && otherIncomeBreakdown?.length > 0) {
-    // Group small items into "Other" for cleaner chart
-    const threshold = 0.02; // 2% threshold
-    const total = otherIncomeBreakdown.reduce((sum: number, item: any) => sum + item.amount, 0);
-
-    const significantItems: any[] = [];
-    let otherAmount = 0;
-    let otherCount = 0;
-
-    for (const item of otherIncomeBreakdown) {
-      if (item.amount / total >= threshold) {
-        significantItems.push(item);
-      } else {
-        otherAmount += item.amount;
-        otherCount += 1;
-      }
-    }
-
-    if (otherAmount > 0) {
-      significantItems.push({ kind: "Other", source: `${otherCount} small items`, amount: otherAmount, count: otherCount });
-    }
-
-    const otherIncomeColors = [colors.blue, colors.purple, colors.cyan, colors.orange, colors.pink, colors.yellow, colors.green, "#6e7681"];
-
-    new Chart(otherIncomeCanvas, {
-      type: "doughnut",
-      data: {
-        labels: significantItems.map((item: any) => item.source || item.kind),
-        datasets: [
-          {
-            data: significantItems.map((item: any) => item.amount),
-            backgroundColor: significantItems.map((_: any, i: number) => otherIncomeColors[i % otherIncomeColors.length]),
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        layout: {
-          padding: { top: 15 },
-        },
-        plugins: {
-          legend: {
-            position: "bottom",
-            align: "start",
-            labels: {
-              color: "#c9d1d9",
-              font: { size: isMobile ? 13 : 14 },
-              padding: isMobile ? 16 : 12,
-              boxWidth: 14,
-              boxHeight: 14,
-            },
-          },
-          tooltip: {
-            callbacks: {
-              title: (context: any) => {
-                const item = significantItems[context[0].dataIndex];
-                return `${item.kind}: ${item.source || "Unknown"}`;
-              },
-              label: (context: any) => {
-                const value = context.raw;
-                const percentage = ((value / total) * 100).toFixed(1);
-                const formatted = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
-                return `${formatted} (${percentage}%)`;
-              },
-            },
-          },
-        },
-      },
-    });
-  }
-
   // Expandable table toggles
   document.querySelectorAll(".expand-toggle").forEach((button) => {
     const container = button.closest(".table-container");
@@ -1081,20 +965,4 @@ const totalExpenses = monthlyData.reduce((sum, m) => sum + m.expenses, 0);
     background: var(--color-border);
   }
 
-  .other-income-layout {
-    display: grid;
-    grid-template-columns: 300px 1fr;
-    gap: 2rem;
-    align-items: start;
-  }
-
-  @media (max-width: 800px) {
-    .other-income-layout {
-      grid-template-columns: 1fr;
-    }
-
-    .other-income-layout .chart-container.small {
-      height: 280px;
-    }
-  }
 </style>
