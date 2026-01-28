@@ -1,0 +1,18 @@
+{
+  "name": "astro-opencollective-analysis",
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@ascorbic/csv-loader": "^2.0.3",
+    "@sgratzl/chartjs-chart-boxplot": "^4.4.5",
+    "astro": "^5.16.15",
+    "chart.js": "^4.5.1",
+    "wrangler": "^4.61.0"
+  }
+}
